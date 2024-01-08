@@ -1,0 +1,205 @@
+on:
+  workflow_call:
+    inputs:
+      bench_dir:
+        description: |
+          If the benchmark-related files and folders are in a subdirectory of the repository,
+          please specify its name here. If the value is specified, the assumption will be made
+          that the directory the value points to contains both ansible and terraform folders.
+          If you don't want this behaviour, you can use the directory and tf_directory inputs.
+        type: string
+        required: false
+      existing_config_path:
+        description: |
+          Path to the existing Ansible configuration file.
+          If this input is provided,
+          the default config won't be created 
+          and your configuration will be added to the ANSIBLE_CONFIG env variable.
+        type: string
+        required: false
+      def_cfg_dir:
+        description: |
+          Path to the directory where the default Ansible configuration will be created.
+        type: string
+        required: false
+      def_cfg_file_name:
+        description: |
+          The name of the default Ansible configuration file.
+        type: string
+        required: false
+      def_cfg_inventory_file_path:
+        description: |
+          The default inventory file path for Ansible.
+        type: string
+        required: false
+      def_cfg_privilege_escalation:
+        description: |
+          The default privilege escalation for Ansible.
+        type: string
+        required: false
+      def_cfg_private_key_file_path:
+        type: string
+        description: |
+          The private key file path for Ansible that will be added to the default configuration.
+      def_cfg_host_checking:
+        description: |
+          The default host checking for Ansible.
+        type: string
+        required: false
+      directory:
+        description: |
+          Relative path to the Ansible directory.
+        type: string
+        required: false
+      playbook_directory:
+        description: |
+          Relative path to the directory where playbooks that represent
+          different benchmark phases are stored.
+        type: string
+        required: false
+      execution_order:
+        description: |
+          The order in which Ansible will execute the playbooks.
+        type: string
+        required: true
+      requirements:
+        description: |
+          Path to Ansible requirements file (requirements.yml).
+        type: string
+        required: false
+      extra_options_string:
+        description: |
+          A list of extra options to be passed to Ansible.
+          Please read the docs to learn more about the format
+          and the way of escaping secrets and environment variables.
+        type: string
+        required: false
+      extra_options_file:
+        description: |
+          A .yml file with extra options to be passed to Ansible.
+          Please read the docs to learn more about the format
+          and the way of escaping secrets and environment variables.
+        type: string
+        required: false
+      eval_folder_where_prev_data_is_checked_out:
+        description: |
+          The file serves as the repository for both historical benchmark data
+          and the location where new benchmark data will be appended.
+          The benchmark result will be saved to a file located in this directory.
+        required: false
+        type: string
+      eval_file_with_bench_data:
+        description: |
+          The name of the file that contains the benchmark data.
+          Currently, only .js files are supported.
+          The benchmark result will be saved to this file.
+        required: false
+        type: string
+      eval_bucket_result_file_path:
+        description: |
+          The path to the file that contains the benchmark result in the GCP bucket.
+        required: false
+        type: string
+      extra_file_uploaded_name:
+        description: |
+          Extra file for the setup and run step.
+          The file will be downloaded to the root of the repository
+          using download-artifact action.
+          This input related to the name of the uploaded artifact.
+        required: false
+        type: string
+      extra_file_name:
+        description: |
+          Extra file for the setup and run step.
+          The file will be downloaded to the root of the repository
+          using download-artifact action.
+        required: false
+        type: string
+      extra_file_target_path:
+        description: |
+          Indicates where the extra file shall be moved.
+        required: false
+        type: string
+
+jobs:
+  setup_and_run:
+    permissions:
+      contents: write
+      id-token: write
+    name: Setup and run the benchmark
+    runs-on: ${{ vars.RUNNER }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download extra file if desired
+        uses: actions/download-artifact@v3
+        if: ${{ inputs.extra_file_uploaded_name != '' }}
+        with:
+          name: ${{ inputs.extra_file_uploaded_name }}
+          path: .
+
+      - name: Move the extra file
+        if: ${{ inputs.extra_file_uploaded_name != '' }}
+        run: mv ./${{ inputs.extra_file_name }} ${{ inputs.extra_file_target_path }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: Setup gcloud CLI
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          version: '>= 363.0.0'
+
+      - name: Setup SSH Private Key
+        run: |
+          mkdir -p /home/runner/.ssh/
+          touch /home/runner/.ssh/t_k
+          echo -e "${{ secrets.ANSIBLE_KEY }}" > /home/runner/.ssh/t_k          
+          chmod 700 /home/runner/.ssh/t_k
+
+      - name: Create Ansible config
+        uses: DawidNiezgodka/GHA_CreateAnsibleCfg@7b6a87bfe812b1a2acce98aa3f3f9161f5f16590
+        with:
+          existing_config_file_path: ${{ inputs.existing_config_path }}
+          directory_path: ${{inputs.bench_dir}}${{ inputs.def_cfg_dir }}
+          config_file_name: ${{ inputs.def_cfg_file_name }}
+          remote_user: ${{ secrets.ANSIBLE_USER }}
+          inventory_file: ${{ inputs.def_cfg_inventory_file_path }}
+          privilege_escalation: ${{ inputs.def_cfg_privilege_escalation }}
+          private_key_file: /home/runner/.ssh/t_k
+          host_key_checking: ${{ inputs.def_cfg_host_checking }}
+
+      - name: Print ansible cfg
+        run: cat ${{inputs.bench_dir}}${{ inputs.def_cfg_dir }}/${{ inputs.def_cfg_file_name }}
+
+      - name: Download hosts.cfg
+        uses: DawidNiezgodka/gcp-gsutil-download-helper@7dc0387bfaa96c41debe6d57461e06b83c642938
+        with:
+          bucket_name: ${{ secrets.GCP_BUCKET_NAME }}
+          target_file_name: ansible/hosts.cfg
+          local_download_path: ${{inputs.bench_dir}}${{ inputs.def_cfg_dir }}/hosts.cfg
+
+      - name: Tree for debug
+        run: tree
+
+      - name: Wait till hosts are reachable via SSH
+        uses: DawidNiezgodka/SshCheck@3d3215ea6d62020aea39be1f3c1764176f341ae8
+        with:
+          hosts_file_path: ${{inputs.bench_dir}}${{ inputs.def_cfg_dir }}/hosts.cfg
+
+      - name: Run Ansible playbooks in a specific order
+        uses: DawidNiezgodka/ExecuteMultiplePlaybooks@9856e50e60bfdb20bcfa5bae5cb32ba17960f3cf
+        id: ansible_provisioning
+        with:
+          ansible_directory: ${{inputs.bench_dir}}${{ inputs.directory }}
+          playbook_directory: ${{ inputs.playbook_directory }}
+          requirements: ${{ inputs.requirements }}
+          execution_order: ${{ inputs.execution_order }}
+          secrets: ${{ toJson(secrets) }}

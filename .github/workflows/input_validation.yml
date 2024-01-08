@@ -1,0 +1,467 @@
+on:
+  workflow_call:
+    inputs:
+      bench_dir:
+        description: |
+          If the benchmark-related files and folders are in a subdirectory of the repository,
+          please specify its name here. If the value is specified, the assumption will be made
+          that the directory the value points to contains both ansible and terraform folders.
+          The main idea behind this input is that you don't have to prepend all the paths
+          with the directory name.
+          If you don't want this behaviour, you can use the snr_directory and infra_directory inputs.
+        type: string
+        required: false
+      number_of_metrics_to_evaluate:
+        description: |
+          The number of metrics that will be evaluated. This information is needed
+          for validation workflow.
+        type: string
+        required: true
+      #####
+      # Infrastructure provisioning inputs
+      #####
+      infra_ensure_fetching_latest_from:
+        description: |
+          The name of the repository from which the files will be fetched.
+          If not provided, the default repository will be used.
+        required: false
+        type: string
+        default: 'main'
+      infra_instance_meta_public_key:
+        description: |
+          The public key that will be added to the instance.
+          The private part will be used to enable SSH access to the instance 
+          and execute Ansible commands (the private key must be set using secrets).
+        type: string
+        required: true
+      infra_custom_inventory_file_path:
+        description: |
+          Whether to use custom Terraform inventory file.
+        type: string
+        required: false
+      infra_vars_file_path:
+        description: |
+          Path to Terraform variables file (.tfvars).
+        type: string
+        required: true
+      infra_variables:
+        description: A multiline string of Terraform variables (key-value pairs).
+        type: string
+        required: false
+        default: ''
+      infra_destroy_after_run:
+        description: |
+          Whether to destroy the infrastructure after the benchmark is finished.
+          If this input is set to true, the infrastructure will be destroyed
+          regardless of the benchmark result.
+        type: boolean
+        required: false
+        default: false
+      infra_lock_id:
+        description: |
+          If you received an error message that the state file is locked,
+          you can use this input to unlock it.
+          Please provide the lock id that was given to you in the error message.
+        required: false
+        type: string
+      infra_extra_file_uploaded_name:
+        description: |
+          Extra file for provision step.
+          The file will be downloaded to the root of the repository
+          using download-artifact action.
+          This input related to the name of the uploaded artifact.
+        required: false
+        type: string
+      infra_extra_file_name:
+        description: |
+          Extra file for provision step.
+          The file will be downloaded to the root of the repository
+          using download-artifact action.
+        required: false
+        type: string
+      infra_extra_file_target_path:
+        description: |
+          Indicates where the extra file shall be moved.
+        required: false
+        type: string
+
+      #####
+      # Setup and run inputs
+      #####
+
+      snr_existing_config_path:
+        description: |
+          Path to the existing Ansible configuration file.
+          If this input is provided,
+          the default config won't be created 
+          and your configuration will be added to the ANSIBLE_CONFIG env variable.
+        type: string
+        required: false
+      snr_def_cfg_dir:
+        description: |
+          Path to the directory where the default Ansible configuration will be created.
+        type: string
+        required: false
+        default: "ansible"
+      snr_def_cfg_file_name:
+        description: |
+          The name of the default Ansible configuration file.
+        type: string
+        required: false
+        default: "ansible.cfg"
+      snr_def_cfg_inventory_file_path:
+        description: |
+          The default inventory file path for Ansible.
+        type: string
+        required: false
+        default: "hosts.cfg"
+      snr_def_cfg_privilege_escalation:
+        description: |
+          The default privilege escalation for Ansible.
+        type: string
+        required: false
+      snr_def_cfg_private_key_file_path:
+        type: string
+        description: |
+          The private key file path for Ansible that will be added to the default configuration.
+      snr_def_cfg_host_checking:
+        description: |
+          The default host checking for Ansible.
+        type: string
+        required: false
+      snr_directory:
+        description: |
+          Relative path to the Ansible directory.
+        type: string
+        required: false
+        default: "ansible"
+      snr_playbook_directory:
+        description: |
+          Relative path to the directory where playbooks that represent
+          different benchmark phases are stored.
+        type: string
+        required: false
+        default: "playbooks"
+      snr_execution_order:
+        description: |
+          The order in which the framework will execute the Ansible playbooks.
+        type: string
+        required: true
+      snr_requirements:
+        description: |
+          Path to Ansible requirements file.
+        type: string
+        required: false
+      snr_extra_options_string:
+        description: |
+          A list of extra options to be passed to Ansible.
+          Please read the docs to learn more about the format
+          and the way of escaping secrets and environment variables.
+        type: string
+        required: false
+      snr_extra_options_file:
+        description: |
+          A .yml file with extra options to be passed to Ansible.
+          Please read the docs to learn more about the format
+          and the way of escaping secrets and environment variables.
+        type: string
+        required: false
+      snr_extra_file_uploaded_name:
+        description: |
+          Extra file for the setup and run step.
+          The file will be downloaded to the root of the repository
+          using download-artifact action.
+          This input related to the name of the uploaded artifact.
+        required: false
+        type: string
+      snr_extra_file_name:
+        description: |
+          Extra file for the setup and run step.
+          The file will be downloaded to the root of the repository
+          using download-artifact action.
+        required: false
+        type: string
+      snr_extra_file_target_path:
+        description: |
+          Indicates where the extra file shall be moved.
+        required: false
+        type: string
+
+      #####
+      # Evaluation inputs
+      #####
+
+      eval_bench_group_name:
+        description: |
+          The name of a specific benchmark. The name will be appended to the data where all
+          the benchmark results are stored. The name can be used to change graphs and compare results.
+        required: false
+        type: string
+        default: 'Benchmark'
+      eval_metrics_to_evaluate:
+        description: |
+          The metrics that will be evaluated.
+        required: false
+        type: string
+      eval_branch_with_bench_data:
+        description: |
+          The name of the branch that contains the benchmark data.
+        required: false
+        type: string
+        default: 'bench_data'
+      eval_previous_data_storage_folder:
+        description: |
+          The first use of this variable is in step called "Checkout the branch with previous bench res to a given folder".
+          Thus, it is used to specify the folder where the previous benchmark data will be checked out.
+          Afterward, in the logic of the BenchEval action, the folder and the file (file_with_previous_bench_data)
+          are used to specify the location where the current benchmark data will be appended 
+          so that it can be saved by executing the step "Save the current benchmark to the file with all bench data".
+        required: false
+        type: string
+        default: 'bench_data'
+      eval_file_with_previous_bench_data:
+        description: |
+          The name of the file that contains the previous benchmark data.
+          This file will be also used to append the current benchmark data.
+          See the description of the previous_data_storage_folder variable for more details.
+        required: false
+        type: string
+        default: 'data.json'
+      eval_bucket_results_folder_path:
+        description: |
+          The path to the GCP bucket folder that contains the benchmark results.
+        required: false
+        type: string
+      eval_bucket_result_file_path:
+        description: |
+          The path to the file that contains the benchmark result in the GCP bucket.
+        required: false
+        type: string
+      eval_local_download_path_for_results:
+        description: |
+          The path to the local folder where the benchmark results will be downloaded.
+        required: false
+        type: string
+        default: 'results'
+      eval_save_current_bench_res:
+        description: |
+          Save the benchmark data pointed to by current_bench_res_file
+          to a file located in benchmark_data_file'.
+        required: false
+        type: string
+        default: 'true'
+      eval_add_action_page_job_summary:
+        description: Leave a job summary with benchmark result comparison in the actions tab of a repo.
+        required: false
+        type: string
+        default: "on"
+      eval_link_to_templated_gh_page_with_results:
+        description: |
+          The link to the GitHub page with the templated benchmark results.
+        required: false
+        type: string
+      eval_comparison_margins:
+        description: |
+          Describes by how much percentage a given value can deviate from the desired
+          value (threshold or prev) to still qualify the benchmark as successful.
+          If you have selected range as one of the modes in the above set of modes,
+          and it is not the only function, please provide values of -1 for the remaining functions.
+          For example, if you previously entered: smaller, smaller, range, and your range is 20%,
+          this input should look as follows: "-1, -1, 20"
+        type: string
+      eval_failing_condition:
+        description: failing condition
+        required: false
+        default: "any"
+        type: string
+      eval_bench_group_to_compare:
+        description: |
+          The name of the benchmark that will be compared to the current benchmark.
+        required: false
+        type: string
+      eval_action_page_job_summary:
+        description: Leave a short summary on the workflow page. Possible values are on, off, if_failed.
+        required: false
+        type: string
+        default: "on"
+      eval_evaluation_method:
+        description: |
+          The method that will be used to evaluate the benchmark.
+          The possible values are 'previous', 'previous_successful', 'threshold', 'jump_detection',
+          'trend_detection_moving_ave', 'threshold_range',
+          'trend_detection_deltas'
+        required: true
+        type: string
+      eval_threshold_values:
+        description: Comma-separated list of threshold values for comparison.
+        required: false
+        type: string
+      eval_comparison_operators:
+        description: |
+          Comma-separated list of operators for threshold comparison. The possible values are smaller, bigger, and tolerance.
+        required: false
+        type: string
+      eval_alert_users_if_bench_failed:
+        description: |
+          Commas-separated list of users to alert if the benchmark failed.
+        required: false
+        type: string
+      eval_comment_to_commit:
+        description: |
+          Add commit comment with the detailed benchmark info.
+          Possible values are on, off, if_failed.
+        required: false
+        type: string
+        default: "if_failed"
+      eval_threshold_upper:
+        description: Comma-separated list of upper threshold values for range comparison.
+        required: false
+        type: string
+      eval_threshold_lower:
+        description: Comma-separated list of lower threshold values for range comparison.
+        required: false
+        type: string
+      eval_jump_detection_thresholds:
+        description: The threshold values for jump detection.
+        required: false
+        type: string
+      eval_trend_thresholds:
+        description: The threshold value for both deltas trend detection and moving average.
+        required: false
+        type: string
+      eval_moving_ave_window_size:
+        description: The window size for moving average trend detection.
+        required: false
+        type: string
+      eval_trend_det_no_sufficient_data_strategy:
+        description: |
+          The strategy to use when there is not enough data to perform trend detection.
+          The possible values are use_available and fail.
+        required: false
+        type: string
+        default: "use_available"
+      eval_trend_det_successful_release_branch:
+        description: |
+          The name of the branch that contains the successful benchmark result
+          in a release branch.
+          If not specified, the main branch will be used.
+        required: false
+        type: string
+        default: "main"
+      eval_extra_file_uploaded_name:
+        description: |
+          Extra file for the eval step.
+          The file will be downloaded to the root of the repository
+          using download-artifact action.
+          This input related to the name of the uploaded artifact.
+        required: false
+        type: string
+      eval_extra_file_name:
+        description: |
+          Extra file for the eval step.
+          The file will be downloaded to the root of the repository
+          using download-artifact action.
+        required: false
+        type: string
+      eval_extra_file_target_path:
+        description: |
+          Indicates where the extra file shall be moved.
+        required: false
+        type: string
+      eval_result_files_merge_strategy_for_each_metric:
+        description: |
+          The strategy to use when merging the the benchmark results from the downloaded folder.
+          This should be a comma separated list of strategies. Each strategy corresponds to a metric.
+          The possible values are: sum, average, max, min, median.
+        required: false
+        type: string
+
+jobs:
+  validate_inputs:
+    permissions:
+      contents: write
+      id-token: write
+    name: Validate inputs
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout the main branch
+        uses: actions/checkout@v4
+
+      - name: Checkout the branch with previous bench res to a given folder
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.eval_branch_with_bench_data }}
+          sparse-checkout: ${{ inputs.eval_file_with_previous_bench_data }}
+          sparse-checkout-cone-mode: false
+          path: ${{ inputs.eval_previous_data_storage_folder }}
+
+      - name: tree for debug
+        run: tree
+
+      - name: Validate inputs
+        uses: DawidNiezgodka/InputValidator@6ffe293bcd019bdeeca81a806c6cf4b32c40682a
+        with:
+          number_of_metrics_to_evaluate: ${{ inputs.number_of_metrics_to_evaluate }}
+          bench_dir: ${{ inputs.bench_dir }}
+          infra_instance_meta_public_key: ${{ inputs.infra_instance_meta_public_key }}
+          infra_custom_inventory_file_path: ${{ inputs.infra_custom_inventory_file_path }}
+          infra_vars_file_path: ${{ inputs.infra_vars_file_path }}
+          infra_variables: ${{ inputs.infra_variables }}
+          infra_destroy_after_run: ${{ inputs.infra_destroy_after_run }}
+          infra_lock_id: ${{ inputs.infra_lock_id }}
+          #infra_ensure_fetching_latest_from: ${{ inputs.infra_ensure_fetching_latest_from }}
+          infra_extra_file_uploaded_name: ${{ inputs.infra_extra_file_uploaded_name }}
+          infra_extra_file_name: ${{ inputs.infra_extra_file_name }}
+          infra_extra_file_target_path: ${{ inputs.infra_extra_file_target_path }}
+          snr_existing_config_path: ${{ inputs.snr_existing_config_path }}
+          snr_def_cfg_dir: ${{ inputs.snr_def_cfg_dir }}
+          snr_def_cfg_file_name: ${{ inputs.snr_def_cfg_file_name }}
+          snr_def_cfg_inventory_file_path: ${{ inputs.snr_def_cfg_inventory_file_path }}
+          snr_def_cfg_privilege_escalation: ${{ inputs.snr_def_cfg_privilege_escalation }}
+          snr_def_cfg_private_key_file_path: ${{ inputs.snr_def_cfg_private_key_file_path }}
+          snr_def_cfg_host_checking: ${{ inputs.snr_def_cfg_host_checking }}
+          snr_directory: ${{ inputs.snr_directory }}
+          snr_playbook_directory: ${{ inputs.snr_playbook_directory }}
+          snr_execution_order: ${{ inputs.snr_execution_order }}
+          snr_requirements: ${{ inputs.snr_requirements }}
+          snr_extra_options_string: ${{ inputs.snr_extra_options_string }}
+          snr_extra_options_file: ${{ inputs.snr_extra_options_file }}
+          snr_extra_file_uploaded_name: ${{ inputs.snr_extra_file_uploaded_name }}
+          snr_extra_file_name: ${{ inputs.snr_extra_file_name }}
+          snr_extra_file_target_path: ${{ inputs.snr_extra_file_target_path }}
+          eval_bench_group_name: ${{ inputs.eval_bench_group_name }}
+          eval_metrics_to_evaluate: ${{ inputs.eval_metrics_to_evaluate }}
+          eval_branch_with_bench_data: ${{ inputs.eval_branch_with_bench_data }}
+          eval_previous_data_storage_folder: ${{ inputs.eval_previous_data_storage_folder }}
+          eval_file_with_previous_bench_data: ${{ inputs.eval_file_with_previous_bench_data }}
+          eval_bucket_results_folder_path: ${{ inputs.eval_bucket_results_folder_path }}
+          eval_bucket_result_file_path: ${{ inputs.eval_bucket_result_file_path }}
+          eval_local_download_path_for_results: ${{ inputs.eval_local_download_path_for_results }}
+          eval_save_current_bench_res: ${{ inputs.eval_save_current_bench_res }}
+          eval_add_action_page_job_summary: ${{ inputs.eval_add_action_page_job_summary }}
+          eval_link_to_templated_gh_page_with_results: ${{ inputs.eval_link_to_templated_gh_page_with_results }}
+          eval_comparison_margins: ${{ inputs.eval_comparison_margins }}
+          eval_failing_condition: ${{ inputs.eval_failing_condition }}
+          eval_bench_group_to_compare: ${{ inputs.eval_bench_group_to_compare }}
+          eval_action_page_job_summary: ${{ inputs.eval_action_page_job_summary }}
+          eval_evaluation_method: ${{ inputs.eval_evaluation_method }}
+          eval_threshold_values: ${{ inputs.eval_threshold_values }}
+          eval_comparison_operators: ${{ inputs.eval_comparison_operators }}
+          eval_alert_users_if_bench_failed: ${{ inputs.eval_alert_users_if_bench_failed }}
+          eval_comment_to_commit: ${{ inputs.eval_comment_to_commit }}
+          eval_threshold_upper: ${{ inputs.eval_threshold_upper }}
+          eval_threshold_lower: ${{ inputs.eval_threshold_lower }}
+          eval_jump_detection_thresholds: ${{ inputs.eval_jump_detection_thresholds }}
+          eval_trend_thresholds: ${{ inputs.eval_trend_thresholds }}
+          eval_moving_ave_window_size: ${{ inputs.eval_moving_ave_window_size }}
+          eval_trend_det_no_sufficient_data_strategy: ${{ inputs.eval_trend_det_no_sufficient_data_strategy }}
+          eval_trend_det_successful_release_branch: ${{ inputs.eval_trend_det_successful_release_branch }}
+          eval_extra_file_uploaded_name: ${{ inputs.eval_extra_file_uploaded_name }}
+          eval_extra_file_name: ${{ inputs.eval_extra_file_name }}
+          eval_extra_file_target_path: ${{ inputs.eval_extra_file_target_path }}
+          eval_result_files_merge_strategy_for_each_metric: ${{ inputs.eval_result_files_merge_strategy_for_each_metric }}
+
+

@@ -1,0 +1,189 @@
+on:
+  workflow_call:
+    inputs:
+      bench_dir:
+        description: |
+          If the benchmark-related files and folders are in a subdirectory of the repository,
+          please specify its name here. If the value is specified, the assumption will be made
+          that the directory the value points to contains both ansible and terraform folders.
+          If you don't want this behaviour, you can use the ans_directory and tf_directory inputs.
+        type: string
+        required: false
+      instance_meta_public_key:
+        description: |
+          The public key that will be added to the instance.
+          The private part will be used to enable SSH access to the instance 
+          and executing Ansible commands.
+        type: string
+        required: true
+      custom_inventory_file_path:
+        description: Path to Terraform inventory file that will be used instead of the default one
+        type: string
+        required: false
+      vars_file_path:
+        description: Path to Terraform variables file
+        type: string
+        required: true
+      variables:
+        description: A multiline string of Terraform variables (key-value pairs)
+        type: string
+        required: false
+      extra_file_uploaded_name:
+        description: |
+          Extra file for provision step.
+          The file will be downloaded to the root of the repository
+          using download-artifact action.
+          This input related to the name of the uploaded artifact.
+        required: false
+        type: string
+      extra_file_name:
+        description: |
+          Extra file for provision step.
+          The file will be downloaded to the root of the repository
+          using download-artifact action.
+        required: false
+        type: string
+      extra_file_target_path:
+        description: |
+          Indicates where the extra file shall be moved.
+        required: false
+        type: string
+      lock_id:
+        description: |
+          If you received an error message that the state file is locked,
+          you can use this input to unlock it.
+          Please provide the lock id that was given to you in the error message.
+        required: false
+        type: string
+      fetch_from:
+        description: |
+          The name of the repository from which the files will be fetched.
+          If not provided, the default repository will be used.
+        required: false
+        type: string
+
+jobs:
+  provision_infrastructure:
+    permissions:
+      contents: write
+      id-token: write
+    name: Provision infrastructure to GCP
+    runs-on: ${{ vars.RUNNER }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.fetch_from }}
+          fetch-depth: 0
+
+      - name: Checkout the repository with default terraform configuration
+        uses: actions/checkout@v4
+        with:
+          repository: DawidNiezgodka/GCPInfraProvider
+          path: default_terraform
+
+      - name: Download extra file if desired
+        uses: actions/download-artifact@v3
+        if: ${{ inputs.extra_file_uploaded_name != '' }}
+        with:
+          name: ${{ inputs.extra_file_uploaded_name }}
+          path: .
+
+      - name: Move the extra file
+        if: ${{ inputs.extra_file_uploaded_name != '' }}
+        run: mv ./${{ inputs.extra_file_name }} ${{ inputs.extra_file_target_path }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: Setup gcloud CLI
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          version: '>= 363.0.0'
+
+      - name: Create backend.tf with the definition of a bucket
+        uses: DawidNiezgodka/CreateTfBackendFile@764312259a79f067e908e54c0c162120b1cdcb2b
+        with:
+          bucketName: ${{ secrets.GCP_BUCKET_NAME }}
+          filePath: default_terraform/terraform
+
+      - name: Move custom inventory file to default terraform directory
+        if: ${{ inputs.custom_inventory_file_path != '' }}
+        run: cp ${{ github.workspace }}/${{inputs.bench_dir}}${{ inputs.custom_inventory_file_path }} ./default_terraform/terraform/templates/hosts.tpl
+
+      - name: Copy public key to default terraform directory
+        run: |
+          cp ${{ github.workspace }}/${{inputs.bench_dir}}${{ inputs.instance_meta_public_key }} ./default_terraform/terraform/publickeys/public_key.pub
+
+      - name: Terraform Unlock
+        uses: dflook/terraform-unlock-state@v1
+        if: ${{ inputs.lock_id != '' }}
+        with:
+          path: default_terraform/terraform
+          lock_id: ${{ inputs.lock_id }}
+
+      - name: Terraform apply
+        uses: dflook/terraform-apply@v1
+        id: first_try
+        continue-on-error: true
+        with:
+          path: default_terraform/terraform
+          auto_approve: true
+          var_file: ${{inputs.bench_dir}}${{ inputs.vars_file_path }}
+          variables: |
+            gha_workspace = "${{ github.workspace }}"
+            service_account_email = "${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}"
+            gcp_user = "${{ secrets.GCP_USER }}"
+            project = "${{ secrets.GCP_PROJECT_ID }}"
+            bucket_name = "${{ secrets.GCP_BUCKET_NAME }}"
+
+      - name: If apply failed, destroy
+        uses: dflook/terraform-destroy@v1
+        if: ${{ steps.first_try.outputs.failure-reason == 'apply-failed' }}
+        with:
+          path: default_terraform/terraform
+          var_file: ${{inputs.bench_dir}}${{ inputs.vars_file_path }}
+          variables: |
+            gha_workspace = "${{ github.workspace }}"
+            service_account_email = "${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}"
+            gcp_user = "${{ secrets.GCP_USER }}"
+            project = "${{ secrets.GCP_PROJECT_ID }}"
+            bucket_name = "${{ secrets.GCP_BUCKET_NAME }}"
+
+      - name: If previous apply failed, try again
+        uses: dflook/terraform-apply@v1
+        if: ${{ steps.first_try.outputs.failure-reason == 'apply-failed' }}
+        id: apply2
+        with:
+          path: default_terraform/terraform
+          auto_approve: true
+          var_file: ${{inputs.bench_dir}}${{ inputs.vars_file_path }}
+          variables: |
+            gha_workspace = "${{ github.workspace }}"
+            service_account_email = "${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}"
+            gcp_user = "${{ secrets.GCP_USER }}"
+            project = "${{ secrets.GCP_PROJECT_ID }}"
+            bucket_name = "${{ secrets.GCP_BUCKET_NAME }}"
+
+      - name: Get outputs
+        uses: dflook/terraform-output@v1
+        id: tf-outputs
+        with:
+          path: default_terraform/terraform
+
+      - name: Create hosts.cfg file
+        uses: DawidNiezgodka/Helper_TfOutputToCfg@f9e6a501ad462df7390d8e044113f60f866d7899
+        with:
+          tf_output: ${{ steps.tf-outputs.outputs.file_content }}
+
+      - name: Upload hosts.cfg to GCP bucket
+        uses: DawidNiezgodka/gcp-gsutil-helper@97c97a3cf5b62256da407cd8853b09e115f59249
+        with:
+          bucket_name: ${{ secrets.GCP_BUCKET_NAME }}
+          local_file_path: ./hosts.cfg
+          destination_path: ansible/hosts.cfg

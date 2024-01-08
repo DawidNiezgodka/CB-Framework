@@ -1,0 +1,39 @@
+on:
+  workflow_call:
+
+jobs:
+  tear_down:
+    permissions:
+      contents: write
+      id-token: write
+    name: Tear down infrastructure
+    runs-on: ${{ vars.RUNNER }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: Create backend.tf with the definition of a bucket
+        uses: DawidNiezgodka/CreateTfBackendFile@764312259a79f067e908e54c0c162120b1cdcb2b
+        with:
+          bucketName: ${{ secrets.GCP_BUCKET_NAME }}
+
+      - name: Create provider.tf
+        uses: DawidNiezgodka/CreateTfProviderFileForGCP@8055b0699241bc8db991c8a5624c8b83547e8610
+        with:
+          project: ${{ secrets.GCP_PROJECT_ID }}
+          region: ${{ secrets.GCP_PROJECT_REGION }}
+
+      - name: Destroy infrastructure
+        uses: dflook/terraform-destroy@v1
+        with:
+          variables: |
+            project = "${{ secrets.GCP_PROJECT_ID }}"
+            region = "${{ secrets.GCP_PROJECT_REGION }}"
